@@ -27,7 +27,7 @@ function setup_for_kernel(l, s; prev_escaped=UInt(0), prev_in_string=UInt(0))
     return newlines
 end
 function generic_lexer_setup(l, buf; prev_escaped=UInt(0), prev_in_string=UInt(0), first=firstindex(buf), last=lastindex(buf))
-    # @info "$(repr(String(buf[:])))"
+    @info "$(repr(String(buf[:])))"
     eols = Int32[]
     l.prev_escaped = prev_escaped
     l.prev_in_string = prev_in_string
