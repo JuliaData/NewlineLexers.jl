@@ -75,7 +75,7 @@ end
 end
 @static if !_AVOID_PLATFORM_SPECIFIC_LLVM_CODE
     @inline function _internal_memchr(ptr::Ptr{UInt8}, len::UInt, valbs::Val)
-        ScanByte.memchr(ptr, len, valbs)
+        ScanByte.memchr(ScanByte.SizedMemory(Ptr{UInt8}(ptr), len), valbs)
     end
 end
 @inline _internal_memchr(ptr::Ptr{UInt8}, len::UInt, byte::UInt8) = ScanByte.memchr(ptr, len, byte)
