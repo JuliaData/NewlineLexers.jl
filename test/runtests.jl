@@ -17,10 +17,10 @@ function setup_for_kernel(l, s; prev_escaped=UInt(0), prev_in_string=UInt(0))
     bytes = collect(codeunits(s))
     newlines = NewlineLexers._find_newlines_kernel!(l, vec64(s))
     eols = Int32[]
-    GC.@preserve bytes NewlineLexers.find_newlines!(l_copy1, bytes, eols)
+    GC.@preserve bytes s NewlineLexers.find_newlines!(l_copy1, bytes, eols)
     @test eols == findall(>(0), digits(newlines, base=2))
     empty!(eols)
-    GC.@preserve bytes NewlineLexers._find_newlines_generic!(l_copy2, bytes, eols)
+    GC.@preserve bytes s NewlineLexers._find_newlines_generic!(l_copy2, bytes, eols)
     @test eols == findall(>(0), digits(newlines, base=2))
     @test l_copy2.prev_escaped == l.prev_escaped
     @test l_copy2.prev_in_string == l.prev_in_string
@@ -32,9 +32,9 @@ function generic_lexer_setup(l, buf; prev_escaped=UInt(0), prev_in_string=UInt(0
     l.prev_in_string = prev_in_string
     l_copy1 = deepcopy(l)
     bytes = collect(codeunits(buf))
-    GC.@preserve bytes NewlineLexers._find_newlines_generic!(l, bytes, eols, first, last)
+    GC.@preserve bytes buf NewlineLexers._find_newlines_generic!(l, bytes, eols, first, last)
     _eols = Int32[]
-    GC.@preserve bytes NewlineLexers.find_newlines!(l_copy1, bytes, _eols, first, last)
+    GC.@preserve bytes buf NewlineLexers.find_newlines!(l_copy1, bytes, _eols, first, last)
     @test _eols == eols
     return eols
 end
@@ -44,7 +44,7 @@ function find_newlines_setup(l, buf; prev_escaped=UInt(0), prev_in_string=UInt(0
     l.prev_escaped = prev_escaped
     l.prev_in_string = prev_in_string
     bytes = collect(codeunits(buf))
-    GC.@preserve bytes NewlineLexers.find_newlines!(l, bytes, eols, first, last)
+    GC.@preserve bytes buf NewlineLexers.find_newlines!(l, bytes, eols, first, last)
     return eols
 end
 

@@ -68,14 +68,17 @@ let # Feature detection -- copied from ScanByte.jl
     end
 end
 
-if _AVOID_PLATFORM_SPECIFIC_LLVM_CODE
+@static if _AVOID_PLATFORM_SPECIFIC_LLVM_CODE
     # The first argument is used to dispatch on a detected CPU feature set,
     # in this case we want to use the generic fallback, so we provide "nothing".
     @inline _internal_memchr(ptr::Ptr{UInt8}, len::UInt, valbs::Val) = ScanByte._memchr(nothing, ScanByte.SizedMemory(Ptr{UInt8}(ptr), len), valbs)
-else
-    @inline _internal_memchr(ptr::Ptr{UInt8}, len::UInt, valbs::Val) = ScanByte.memchr(ptr, len, valbs)
 end
-@inline _internal_memchr(ptr::Ptr{UInt8}, len::UInt, byte::UInt8) = ScanByte.memchr(ptr, len, byte)
+@static if !_AVOID_PLATFORM_SPECIFIC_LLVM_CODE
+    @inline function _internal_memchr(ptr::Ptr{UInt8}, len::UInt, valbs::Val)
+        ScanByte.memchr(ScanByte.SizedMemory(Ptr{UInt8}(ptr), len), valbs)
+    end
+end
+@inline _internal_memchr(ptr::Ptr{UInt8}, len::UInt, byte::UInt8) = ScanByte.memchr(ScanByte.SizedMemory(Ptr{UInt8}(ptr), len), byte)
 
 # Rules for Lexer{Q,Q,Q} when there is ambiguity between quotechar and escapechar:
 # we use `prev_escaped` and `prev_in_string` to disambiguate the 4 cases:
