@@ -75,7 +75,6 @@ end
 end
 @static if !_AVOID_PLATFORM_SPECIFIC_LLVM_CODE
     @inline function _internal_memchr(ptr::Ptr{UInt8}, len::UInt, valbs::Val)
-        println(ptr - len)
         ScanByte.memchr(ptr, len, valbs)
     end
 end
@@ -284,11 +283,14 @@ function _find_newlines_generic!(l::Lexer{E,OQ,CQ}, buf, out, curr_pos::Int=firs
         end
     end
 
-    ptr += offset
     ended_on_escape = false
+    ptr0 = ptr += offset
+    len = bytes_to_search
+    base_ptr = pointer(buf)
     @inbounds while bytes_to_search > 0
         # ScanByte seems to sometimes return an UInt instead of an Int in
         # some fallback implementations.
+        @assert (((bytes_to_search + ptr) == (ptr0 + len)) && (bytes_to_search + ptr == base_ptr + end_pos)) "$l $(repr(String(buf[:]))) $(Int(bytes_to_search + ptr)) $(Int(ptr0 + len)) $(Int(base_ptr + end_pos))"
         pos_to_check = Base.bitcast(Int, something(_internal_memchr(ptr, Core.bitcast(UInt, bytes_to_search), structural_characters), 0))
         pos_to_check == 0 && break
 
