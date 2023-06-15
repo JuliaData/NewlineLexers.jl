@@ -44,7 +44,7 @@ function find_newlines_setup(l, buf; prev_escaped=UInt(0), prev_in_string=UInt(0
     l.prev_escaped = prev_escaped
     l.prev_in_string = prev_in_string
     bytes = collect(codeunits(buf))
-    GC.@preserve bytes NewlineLexers.find_newlines!(l, bytes, eols, first, last)
+    GC.@preserve bytes buf NewlineLexers.find_newlines!(l, bytes, eols, first, last)
     return eols
 end
 
