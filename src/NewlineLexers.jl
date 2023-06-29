@@ -80,6 +80,21 @@ end
 end
 @inline _internal_memchr(ptr::Ptr{UInt8}, len::UInt, byte::UInt8) = ScanByte.memchr(ScanByte.SizedMemory(Ptr{UInt8}(ptr), len), byte)
 
+const _DOUBLEQUOTE64 = Vec(ntuple(_->VecElement(UInt8('"')), 64))
+const _SINGLEQUOTE64 = Vec(ntuple(_->VecElement(UInt8('\'')), 64))
+const _BACKSLASH64 = Vec(ntuple(_->VecElement(UInt8('\\')), 64))
+const _LINEFEED64 = Vec(ntuple(_->VecElement(UInt8('\n')), 64))
+const _CARRIAGERETURN64 = Vec(ntuple(_->VecElement(UInt8('\r')), 64))
+
+function _get_char_vec64(c::UInt8)
+    c == UInt8('"') && return _DOUBLEQUOTE64
+    c == UInt8('\'') && return _SINGLEQUOTE64
+    c == UInt8('\\') && return _BACKSLASH64
+    c == UInt8('\n') && return _LINEFEED64
+    c == UInt8('\r') && return _CARRIAGERETURN64
+    return Vec(ntuple(_->VecElement(c), 64))
+end
+
 # Rules for Lexer{Q,Q,Q} when there is ambiguity between quotechar and escapechar:
 # we use `prev_escaped` and `prev_in_string` to disambiguate the 4 cases:
 # ---------+--------------------+--------------------+--------------------------------------
@@ -109,12 +124,12 @@ mutable struct Lexer{E,OQ,CQ,NL,IO_t}
         closequotechar::Union{Char,UInt8}=UInt8('"'),
         newline::Union{Char,UInt8}=UInt8('\n'),
     ) where {IO_t}
-        NL = Vec(ntuple(_->VecElement(UInt8(newline)), 64))
-        E = Vec(ntuple(_->VecElement(UInt8(escapechar)), 64))
+        NL = _get_char_vec64(UInt8(newline))
+        E = _get_char_vec64(UInt8(escapechar))
         if escapechar == openquotechar
             Q = E
         else
-            Q = Vec(ntuple(_->VecElement(UInt8(openquotechar)), 64))
+            Q = _get_char_vec64(UInt8(openquotechar))
         end
         return new{UInt8(escapechar), UInt8(openquotechar), UInt8(closequotechar), UInt8(newline), IO_t}(
             io, E, Q, NL, UInt(0), UInt(0), false
@@ -122,10 +137,8 @@ mutable struct Lexer{E,OQ,CQ,NL,IO_t}
     end
 
     function Lexer(io::IO_t, ::Nothing, newline::Union{Char,UInt8}=UInt8('\n')) where {IO_t}
-        NL = Vec(ntuple(_->VecElement(UInt8(newline)), 64))
-        E = Vec(ntuple(_->VecElement(0xff), 64))
-        Q = E
-        return new{Nothing, Nothing, Nothing, UInt8(newline), IO_t}(io, E, Q, NL, UInt(0), UInt(0), false)
+        NL = _get_char_vec64(UInt8(newline))
+        return new{Nothing, Nothing, Nothing, UInt8(newline), IO_t}(io, NL, NL, NL, UInt(0), UInt(0), false)
     end
 end
 
