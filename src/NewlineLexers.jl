@@ -105,6 +105,19 @@ end
 #   ...ab" | 0x0000000000000001 | 0x0000000000000000 | on a quote or an odd sequence of quotes
 #   ...a"" | 0x0000000000000000 | 0x0000000000000000 | on a non-quote or an even sequence of quotes
 # ---------+--------------------+--------------------+--------------------------------------
+# For Lexer{E,Q,Q}:
+# ---------+--------------------+--------------------+--------------------------------------
+# prev end |    -> prev_escaped |  -> prev_in_string | Comment -- we ended...
+# ---------+--------------------+--------------------+--------------------------------------
+#   ..."a" | 0x0000000000000000 | 0x0000000000000000 | on the very end of a string
+#   ..."ab | 0x0000000000000000 | 0xffffffffffffffff | inside a string
+#   ...ab" | 0x0000000000000000 | 0xffffffffffffffff | on the very beginning of a string
+#   ...a"" | 0x0000000000000000 | 0x0000000000000000 | on the very end of an empty string
+#   ...a"\ | 0x0000000000000001 | 0xffffffffffffffff | inside a string on an escape
+#   ...a\\ | 0x0000000000000000 | 0x0000000000000000 | we ended on an escaped escape char (this is prob not valid CSV)
+#   ...ab\ | 0x0000000000000001 | 0x0000000000000000 | outside a string on an escape (this is prob not valid CSV)
+# ---------+--------------------+--------------------+--------------------------------------
+
 # These must be respected in the `_find_newlines_kernel!` and `_find_newlines_generic!`
 # All other cases are unambiguous, i.e. we can tell if we are inside a string or not,
 # and if we are, we can tell if we are on an escape or not.
@@ -141,6 +154,11 @@ mutable struct Lexer{E,OQ,CQ,NL,IO_t}
         return new{Nothing, Nothing, Nothing, UInt8(newline), IO_t}(io, NL, NL, NL, UInt(0), UInt(0), false)
     end
 end
+
+escapechar(::Lexer{E,OQ,CQ,NL})     where {E,OQ,CQ,NL} = E
+openquotechar(::Lexer{E,OQ,CQ,NL})  where {E,OQ,CQ,NL} = OQ
+closequotechar(::Lexer{E,OQ,CQ,NL}) where {E,OQ,CQ,NL} = CQ
+newline(::Lexer{E,OQ,CQ,NL})        where {E,OQ,CQ,NL} = NL
 
 function Base.show(io::IO, l::Lexer{E,OQ,CQ,NL}) where {E,OQ,CQ,NL}
     _f(x) = x === Nothing ? "Nothing" : repr(Char(x))
@@ -250,13 +268,13 @@ end
     #     "\n      $l",
     #     "\n     \"", replace(join(map(x->Char(x.value), collect(input.data))), "\n" => "*"), "\"",
     #     "\nX   0b", bitstring(SIMD.Intrinsics.bitreverse(escape_chars)),
-    #     "\nF   0b", bitstring(SIMD.Intrinsics.bitreverse(follows_escape)), " X << 1",
+    #     "\nF   0b", bitstring(SIMD.Intrinsics.bitreverse(follows_escape)), " X << 1 | l.prev_escaped",
     #     "\nEB  0b", bitstring(SIMD.Intrinsics.bitreverse(even_bits)),
     #     "\nOS  0b", bitstring(SIMD.Intrinsics.bitreverse(odd_sequence_starts)), " X & ~EB & ~F",
     #     "\nEC  0b", bitstring(SIMD.Intrinsics.bitreverse(sequences_starting_on_even_bits)), " X + OS",
     #     "\nIM  0b", bitstring(SIMD.Intrinsics.bitreverse(invert_mask)), " EC << 1",
     #     "\nE   0b", bitstring(SIMD.Intrinsics.bitreverse(escaped)), " (EB ⊻ IM) & F",
-    #     "\nQ   0b", bitstring(SIMD.Intrinsics.bitreverse(quoted)), " quotes & ~E",
+    #     "\nQ   0b", bitstring(SIMD.Intrinsics.bitreverse(quotes)), " quotes & ~E",
     #     "\nS   0b", bitstring(SIMD.Intrinsics.bitreverse(in_string)), " CLMUL(Q)",
     #     "\nL   0b", bitstring(SIMD.Intrinsics.bitreverse(newlines)),
     #     "\n     \"", replace(join(map(x->Char(x.value), collect(input.data))), "\n" => "*"), "\"",
@@ -298,6 +316,7 @@ function _find_newlines_generic!(l::Lexer{E,OQ,CQ}, buf, out, curr_pos::Int=firs
 
     ptr += offset
     ended_on_escape = false
+    byte_to_check = UInt8(0)
     @inbounds while bytes_to_search > 0
         # ScanByte seems to sometimes return an UInt instead of an Int in
         # some fallback implementations.
@@ -342,7 +361,18 @@ function _find_newlines_generic!(l::Lexer{E,OQ,CQ}, buf, out, curr_pos::Int=firs
                         break
                     end
                 end
-            elseif byte_to_check in (E, CQ)
+            elseif byte_to_check == E
+                # this will most likely trigger a parser error
+                if offset < unsafe_trunc(Int32, end_pos)
+                    if buf[offset+Int32(1)] in (E, CQ)
+                        pos_to_check += 1
+                        offset += Int32(1)
+                    end
+                else # end of chunk
+                    ended_on_escape = true
+                    break
+                end
+            elseif byte_to_check == CQ
                 # this will most likely trigger a parser error
             else # newline
                 push!(out, offset)

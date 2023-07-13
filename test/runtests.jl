@@ -54,6 +54,14 @@ bits() = bits(Int[])
 
 @testset "NewlineLexers.jl" begin
 
+@testset "param accessors" begin
+    l = NewlineLexers.Lexer(IOBuffer(), UInt8('\\'), UInt8('['), UInt8(']'), UInt8('\n'))
+    @test NewlineLexers.escapechar(l) == UInt8('\\')
+    @test NewlineLexers.openquotechar(l) == UInt8('[')
+    @test NewlineLexers.closequotechar(l) == UInt8(']')
+    @test NewlineLexers.newline(l) == UInt8('\n')
+end
+
 @testset "prefix_xor" begin
     @test NewlineLexers.prefix_xor(UInt(0)) == UInt(0)
     @test NewlineLexers.prefix_xor(UInt(1)) == typemax(UInt)
@@ -202,6 +210,20 @@ end
     @test newlines == typemin(UInt)
     @test l.prev_escaped == true
     @test l.prev_in_string == typemax(UInt)
+
+    # Ends with an escape ouside of string (invalid but possible to encounter in practice)
+    s = "0123456789_123456789_123456789_123456789_123456789_123456789_12\\"
+    newlines = setup_for_kernel(l, s)
+    @test newlines == typemin(UInt)
+    @test l.prev_escaped == true
+    @test l.prev_in_string == typemin(UInt)
+
+    # Ends with an escaped escape ouside of string (invalid but possible to encounter in practice)
+    s = "0123456789_123456789_123456789_123456789_123456789_123456789_1\\\\"
+    newlines = setup_for_kernel(l, s)
+    @test newlines == typemin(UInt)
+    @test l.prev_escaped == false
+    @test l.prev_in_string == typemin(UInt)
 
     # Ends with two escapes
     s = "\"123456789_123456789_123456789_123456789_123456789_123456789_1\\\\"
@@ -422,9 +444,14 @@ end
     @test l.prev_in_string == typemin(UInt)
 
     # Single char: escapechar
-    out = generic_lexer_setup(l, "\\")
+    out = generic_lexer_setup(l, "\\") # Note that this shouldn't happen in a valid csv file
     @test isempty(out)
-    @test l.prev_escaped == false # escapechar outside of string is ignored if E != Q
+    @test l.prev_escaped == true
+    @test l.prev_in_string == typemin(UInt)
+
+    out = generic_lexer_setup(l, "\\\\")
+    @test isempty(out)
+    @test l.prev_escaped == false
     @test l.prev_in_string == typemin(UInt)
 
     # Single char: open quote
@@ -529,6 +556,11 @@ end
         @test isempty(out)
         @test l.prev_escaped == true
         @test l.prev_in_string == typemax(UInt)
+
+        out = generic_lexer_setup(l, "12345\\\\", prev_in_string=typemax(UInt))
+        @test isempty(out)
+        @test l.prev_escaped == false
+        @test l.prev_in_string == typemax(UInt)
     end
 
     @testset "Starts on escape" begin
@@ -561,7 +593,7 @@ end
     # Single char: escapechar
     out = generic_lexer_setup(l, "\\")
     @test isempty(out)
-    @test l.prev_escaped == false # escapechar outside of string is ignored if E != Q
+    @test l.prev_escaped == true
     @test l.prev_in_string == typemin(UInt)
 
     # Single char: single quote
