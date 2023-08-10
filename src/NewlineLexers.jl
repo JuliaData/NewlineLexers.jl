@@ -17,7 +17,7 @@ end
 # on Julia 1.8. This is perhaps overly conservative, as the issue only
 # happens with PackageCompiler and only when targetting multiple cpu targets.
 # TODO: use Preferences.jl and more granular feature settings
-const _AVOID_PLATFORM_SPECIFIC_LLVM_CODE = get(ENV, "JULIA_CPU_TARGET", "native") != "native"
+const _AVOID_PLATFORM_SPECIFIC_LLVM_CODE = get(ENV, "JULIA_CPU_TARGET", "-Cnative" in Base.julia_cmd().exec ? "native" : "") != "native"
 
 # Compare two vectors of 64 bytes and produce an UInt64 where the set bits
 # indicate the positions where the two vectors match.
