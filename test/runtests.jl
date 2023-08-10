@@ -3,6 +3,8 @@ using NewlineLexers
 using SIMD: Vec, vload
 import ScanByte
 
+@info "_AVOID_PLATFORM_SPECIFIC_LLVM_CODE=$(NewlineLexers._AVOID_PLATFORM_SPECIFIC_LLVM_CODE)"
+
 vec64(x::Char) = vec64(UInt8(x))
 vec64(x::UInt8) = Vec(ntuple(_->VecElement(x), 64))
 vec64(xs::AbstractVector{UInt8}) = vload(Vec{64,UInt8}, xs, 1)
