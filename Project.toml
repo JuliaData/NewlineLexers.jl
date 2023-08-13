@@ -10,7 +10,7 @@ ScanByte = "7b38b023-a4d7-4c5e-8d43-3f3097f304eb"
 
 [compat]
 SIMD = "3"
-ScanByte = "0.3"
+ScanByte = "0.3, 0.4"
 julia = "1.6"
 
 [extras]
