@@ -145,11 +145,12 @@ The type parameters are:
 - `NL`: the newline character
 - `IO_t`: the type of the IO object, e.g. `IOBuffer` or `IOStream`
 
+Only single-byte characters are supported.
 When `E`, `OQ`, and `CQ` are not `Nothing`, the lexer will find all newlines in the input,
 that are not inside a string (between two quotes). This is useful for finding record separators
 in CSVs.
 
-A quote-unaware lexer can be created via the `Lexer(op, nothing, newline)`. This lexer
+A quote-unaware lexer can be created via the `Lexer(io, nothing, newline)`. This lexer
 will find all newlines in the input, regardless of whether they are inside a string or not.
 """
 mutable struct Lexer{E,OQ,CQ,NL,IO_t}
@@ -157,8 +158,8 @@ mutable struct Lexer{E,OQ,CQ,NL,IO_t}
     @constfield escape::Vec{64, UInt8}
     @constfield quotechar::Vec{64, UInt8}
     @constfield newline::Vec{64, UInt8}
-    prev_escaped::UInt   # 0 or 1
-    prev_in_string::UInt # 0 or typemax(UInt)
+    prev_escaped::UInt   # 0 or 1, see the tables above
+    prev_in_string::UInt # 0 or typemax(UInt), see the tables above
     done::Bool           # Right now, this is not used but could be set by the caller
 
     function Lexer(
@@ -274,7 +275,9 @@ possibly_not_in_string(l::Lexer{E,Q}) where {E,Q} = l.prev_in_string == 0
     # This ignores strings that are entirely made up of quotes, e.g. "", """", etc.
     # But those cannot contain newlines so we don't care
     # Shift by one as carries are always one bit off due to the addition 0b0001 + 0b0001 = 0b0010
-    quotes = ((even_string_starts | odd_string_starts) >> 1) ⊻ l.prev_escaped # TODO: explain the xor and how it works with the prev_escaped
+    # When `l.prev_escaped` is set, it means we ended on an unescaped quote, so we need to add
+    # it here.
+    quotes = ((even_string_starts | odd_string_starts) >> 1) ⊻ l.prev_escaped
     in_string = prefix_xor(quotes) ⊻ l.prev_in_string
     newlines = compress_newlines(l, input) & ~in_string
 
@@ -357,7 +360,7 @@ end
     return newlines
 end
 
-# Generic fallback for when open and close quote differs (should be also used in case the buffer is too small for SIMD, i.e. < 64 bytes).
+# Generic fallback for when open and close quote differs and when buffer, or its last trailing bytes are too small for SIMD, i.e. < 64 bytes).
 function _find_newlines_generic!(l::Lexer{E,OQ,CQ}, buf, out, curr_pos::Int=firstindex(buf), end_pos::Int=lastindex(buf)) where {E,OQ,CQ}
     @assert (1 <= curr_pos <= end_pos <= length(buf) && end_pos <= typemax(Int32))
     structural_characters = _scanbyte_bytes(l)
@@ -505,6 +508,8 @@ end
 
 Find newlines in `buf[curr_pos:end_pos]` and push their positions to `out`. The newline positions are relative to the beginning of `buf`.
 The type of the `Lexer` determines the rules for handling quotes and escapes. See `Lexer` for details.
+
+`end_pos` must be less than `typemax(Int32)` and `1 <= curr_pos <= end_pos`.
 """
 function find_newlines! end
 
