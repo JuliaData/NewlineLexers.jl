@@ -48,7 +48,7 @@ let # Feature detection -- copied from ScanByte.jl
     features = split(unsafe_string(features_cstring), ',')
     Libc.free(features_cstring)
 
-    # prefix_xor works like this: it goes through the bits of the input UInt from least signigicant to most significant
+    # prefix_xor works like this: it goes through the bits of the input UInt from least significant to most significant
     # and it xors the current with the previous one. This means that it start producing 0 until it meets the first 1, then
     # it starts producing 1s until it meets the next 1, then it starts producing 0s again, etc.
     # Example:
@@ -136,7 +136,7 @@ end
     Lexer(io, escapechar, openquotechar, closequotechar, newline) -> Lexer{E,OQ,CQ,NL,IO_t}
     Lexer(io, nothing, newline) -> Lexer{Nothing,Nothing,Nothing,NL,IO_t}
 
-A steteful lexer type for newline detection. Use with the `find_newlines!` function.
+A stateful lexer type for newline detection. Use with the `find_newlines!` function.
 The type parameters are:
 
 - `E`: the escape character
