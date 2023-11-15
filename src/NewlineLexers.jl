@@ -52,8 +52,8 @@ let # Feature detection -- copied from ScanByte.jl
     # and it xors the current with the previous one. This means that it start producing 0 until it meets the first 1, then
     # it starts producing 1s until it meets the next 1, then it starts producing 0s again, etc.
     # Example:
-    #   0b00001000010
-    #-> 0b00000111110
+    #    0b00001000010
+    # -> 0b00000111110
     @eval if _AVOID_PLATFORM_SPECIFIC_LLVM_CODE || !any(x->occursin("clmul", x), $(features))
         @inline function prefix_xor(q)
             mask = q ⊻ (q << 1)
@@ -145,13 +145,15 @@ The type parameters are:
 - `NL`: the newline character
 - `IO_t`: the type of the IO object, e.g. `IOBuffer` or `IOStream`
 
-Only single-byte characters are supported.
+Either `E`, `OQ`, and `CQ` are all `Nothing`, or they are all single-byte characters.
+
 When `E`, `OQ`, and `CQ` are not `Nothing`, the lexer will find all newlines in the input,
 that are not inside a string (between two quotes). This is useful for finding record separators
 in CSVs.
 
-A quote-unaware lexer can be created via the `Lexer(io, nothing, newline)`. This lexer
-will find all newlines in the input, regardless of whether they are inside a string or not.
+If they are all `Nothing`, the lexer will be quote-unaware, and find all newlines in the input,
+regardless of whether they are inside a string or not. You can construct such a lexer with
+`Lexer(io, nothing, newline)`.
 """
 mutable struct Lexer{E,OQ,CQ,NL,IO_t}
     @constfield io::IO_t
@@ -226,7 +228,8 @@ possibly_not_in_string(l::Lexer{E,Q}) where {E,Q} = l.prev_in_string == 0
 # This is our adaptation of the original `simdjson` implementation which handles the escaping rules
 # common in CSVs.
 #
-# An example with one quoted newline in a string and one unquoted newline:
+# An example showing intermediate results when parsing 64 bytes with one quoted newline in a
+# string and one unquoted newline:
 # Note all the bits are reversed for readability. `*` marks the newlines.
 #
 #      "abc,"quoted,field","quoted*newline","escaped"" """" """"",01234*"
@@ -310,7 +313,8 @@ end
 # In this case we follow the implementation from `simdjson`.
 # See section "3.1.1 Identification of the quoted substrings" in https://arxiv.org/pdf/1902.08318.pdf
 #
-# An example with one quoted newline in a string and one unquoted newline:
+# An example showing intermediate results when parsing 64 bytes with one quoted newline in a
+# string and one unquoted newline:
 # Note all the bits are reversed for readability. `*` marks the newlines.
 #
 #      "abc,"quoted,field","quoted*newline","escaped\\ \\\\ \"\"",01234*"
