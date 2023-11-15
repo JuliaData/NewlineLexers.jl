@@ -49,7 +49,7 @@ let # Feature detection -- copied from ScanByte.jl
     Libc.free(features_cstring)
 
     # prefix_xor works like this: it goes through the bits of the input UInt from least significant to most significant
-    # and it xors the current with the previous one. This means that it start producing 0 until it meets the first 1, then
+    # and it xors the current bit with the previous one. This means that it starts producing 0 until it meets the first 1, then
     # it starts producing 1s until it meets the next 1, then it starts producing 0s again, etc.
     # Example:
     #    0b00001000010
