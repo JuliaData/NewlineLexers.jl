@@ -48,6 +48,12 @@ let # Feature detection -- copied from ScanByte.jl
     features = split(unsafe_string(features_cstring), ',')
     Libc.free(features_cstring)
 
+    # prefix_xor works like this: it goes through the bits of the input UInt from least significant to most significant
+    # and it xors the current bit with the previous one. This means that it starts producing 0 until it meets the first 1, then
+    # it starts producing 1s until it meets the next 1, then it starts producing 0s again, etc.
+    # Example:
+    #    0b00001000010
+    # -> 0b00000111110
     @eval if _AVOID_PLATFORM_SPECIFIC_LLVM_CODE || !any(x->occursin("clmul", x), $(features))
         @inline function prefix_xor(q)
             mask = q ⊻ (q << 1)
@@ -59,6 +65,7 @@ let # Feature detection -- copied from ScanByte.jl
             return mask
         end
     else
+        # Cool explainer on carryless multiplication: https://wunkolo.github.io/post/2020/05/pclmulqdq-tricks/
         function carrylessmul(a::NTuple{2,VecElement{UInt64}}, b::NTuple{2,VecElement{UInt64}})
             ccall("llvm.x86.pclmulqdq", llvmcall, NTuple{2,VecElement{UInt64}}, (NTuple{2,VecElement{UInt64}}, NTuple{2,VecElement{UInt64}}, UInt8), a, b, 0)
         end
@@ -123,13 +130,38 @@ end
 # These must be respected in the `_find_newlines_kernel!` and `_find_newlines_generic!`
 # All other cases are unambiguous, i.e. we can tell if we are inside a string or not,
 # and if we are, we can tell if we are on an escape or not.
+"""
+    Lexer{E,OQ,CQ,NL,IO_t}
+
+    Lexer(io, escapechar, openquotechar, closequotechar, newline) -> Lexer{E,OQ,CQ,NL,IO_t}
+    Lexer(io, nothing, newline) -> Lexer{Nothing,Nothing,Nothing,NL,IO_t}
+
+A stateful lexer type for newline detection. Use with the `find_newlines!` function.
+The type parameters are:
+
+- `E`: the escape character
+- `OQ`: the open quote character
+- `CQ`: the close quote character
+- `NL`: the newline character
+- `IO_t`: the type of the IO object, e.g. `IOBuffer` or `IOStream`
+
+Either `E`, `OQ`, and `CQ` are all `Nothing`, or they are all single-byte characters.
+
+When `E`, `OQ`, and `CQ` are not `Nothing`, the lexer will find all newlines in the input,
+that are not inside a string (between two quotes). This is useful for finding record separators
+in CSVs.
+
+If they are all `Nothing`, the lexer will be quote-unaware, and find all newlines in the input,
+regardless of whether they are inside a string or not. You can construct such a lexer with
+`Lexer(io, nothing, newline)`.
+"""
 mutable struct Lexer{E,OQ,CQ,NL,IO_t}
     @constfield io::IO_t
     @constfield escape::Vec{64, UInt8}
     @constfield quotechar::Vec{64, UInt8}
     @constfield newline::Vec{64, UInt8}
-    prev_escaped::UInt   # 0 or 1
-    prev_in_string::UInt # 0 or typemax(UInt)
+    prev_escaped::UInt   # 0 or 1, see the tables above
+    prev_in_string::UInt # 0 or typemax(UInt), see the tables above
     done::Bool           # Right now, this is not used but could be set by the caller
 
     function Lexer(
@@ -192,6 +224,28 @@ end
 possibly_not_in_string(l::Lexer{Q,Q,Q}) where {Q} = (l.prev_in_string & UInt(1)) == l.prev_escaped
 possibly_not_in_string(l::Lexer{E,Q}) where {E,Q} = l.prev_in_string == 0
 
+# This is where we process 64 byte input when the quotechar and escapechar are identical.
+# This is our adaptation of the original `simdjson` implementation which handles the escaping rules
+# common in CSVs.
+#
+# An example showing intermediate results when parsing 64 bytes with one quoted newline in a
+# string and one unquoted newline:
+# Note all the bits are reversed for readability. `*` marks the newlines.
+#
+#      "abc,"quoted,field","quoted*newline","escaped"" """" """"",01234*"
+# X   0b0000100000000000010100000000000000101000000011011110111110000000
+# F   0b0000010000000000001010000000000000010100000001101111011111000000
+# SEQ 0b0000100000000000010100000000000000101000000010010000100000000000
+# EB  0b1010101010101010101010101010101010101010101010101010101010101010
+# OS  0b0000000000000000010100000000000000000000000000010000000000000000
+# ES  0b0000100000000000000000000000000000101000000010000000100000000000
+# OC  0b0000000000000000001010000000000000000000000000000000000000000000
+# EC  0b0000010000000000000000000000000000010100000000000000000001000000
+# Q   0b0000100000000000010100000000000000101000000000000000000010000000
+# PX  0b0000111111111111100111111111111111001111111111111111111100000000
+# STR 0b0000111111111111100111111111111111001111111111111111111100000000
+# NL  0b0000000000000000000000000000000000000000000000000000000000000001
+#      "abc,"quoted,field","quoted*newline","escaped"" """" """"",01234*
 @inline function _find_newlines_kernel!(l::Lexer{Q,Q,Q}, input::Vec{64, UInt8}) where {Q}
     escape_chars = compress_escapes(l, input)
     follows_escape = escape_chars << 1
@@ -224,7 +278,9 @@ possibly_not_in_string(l::Lexer{E,Q}) where {E,Q} = l.prev_in_string == 0
     # This ignores strings that are entirely made up of quotes, e.g. "", """", etc.
     # But those cannot contain newlines so we don't care
     # Shift by one as carries are always one bit off due to the addition 0b0001 + 0b0001 = 0b0010
-    quotes = ((even_string_starts | odd_string_starts) >> 1) ⊻ l.prev_escaped # TODO: explain the xor and how it works with the prev_escaped
+    # When `l.prev_escaped` is set, it means we ended on an unescaped quote, so we need to add
+    # it here.
+    quotes = ((even_string_starts | odd_string_starts) >> 1) ⊻ l.prev_escaped
     in_string = prefix_xor(quotes) ⊻ l.prev_in_string
     newlines = compress_newlines(l, input) & ~in_string
 
@@ -253,6 +309,25 @@ possibly_not_in_string(l::Lexer{E,Q}) where {E,Q} = l.prev_in_string == 0
     return newlines
 end
 
+# This is where we process 64 byte input when the quotechar and escapechar are different characters.
+# In this case we follow the implementation from `simdjson`.
+# See section "3.1.1 Identification of the quoted substrings" in https://arxiv.org/pdf/1902.08318.pdf
+#
+# An example showing intermediate results when parsing 64 bytes with one quoted newline in a
+# string and one unquoted newline:
+# Note all the bits are reversed for readability. `*` marks the newlines.
+#
+#      "abc,"quoted,field","quoted*newline","escaped\\ \\\\ \"\"",01234*"
+# X   0b0000000000000000000000000000000000000000000011011110101000000000
+# F   0b0000000000000000000000000000000000000000000001101111010100000000 X << 1 | l.prev_escaped
+# EB  0b1010101010101010101010101010101010101010101010101010101010101010
+# OS  0b0000000000000000000000000000000000000000000000010000000000000000 X & ~EB & ~F
+# EC  0b0000000000000000000000000000000000000000000011000001101000000000 X + OS
+# IM  0b0000000000000000000000000000000000000000000001100000110100000000 EC << 1
+# E   0b0000000000000000000000000000000000000000000001001010010100000000 (EB ⊻ IM) & F
+# Q   0b0000100000000000010100000000000000101000000000000000000010000000 quotes & ~E
+# STR 0b0000111111111111100111111111111111001111111111111111111100000000 CLMUL(Q)
+# NL  0b0000000000000000000000000000000000000000000000000000000000000001
 @inline function _find_newlines_kernel!(l::Lexer{E,Q,Q}, input::Vec{64, UInt8}) where {E,Q}
     escape_chars = compress_escapes(l, input) & ~l.prev_escaped
     follows_escape = escape_chars << 1 | l.prev_escaped
@@ -277,8 +352,8 @@ end
     #     "\nIM  0b", bitstring(SIMD.Intrinsics.bitreverse(invert_mask)), " EC << 1",
     #     "\nE   0b", bitstring(SIMD.Intrinsics.bitreverse(escaped)), " (EB ⊻ IM) & F",
     #     "\nQ   0b", bitstring(SIMD.Intrinsics.bitreverse(quotes)), " quotes & ~E",
-    #     "\nS   0b", bitstring(SIMD.Intrinsics.bitreverse(in_string)), " CLMUL(Q)",
-    #     "\nL   0b", bitstring(SIMD.Intrinsics.bitreverse(newlines)),
+    #     "\nSTR 0b", bitstring(SIMD.Intrinsics.bitreverse(in_string)), " CLMUL(Q)",
+    #     "\nNL  0b", bitstring(SIMD.Intrinsics.bitreverse(newlines)),
     #     "\n     \"", replace(join(map(x->Char(x.value), collect(input.data))), "\n" => "*"), "\"",
     #     "\n[E] 0b", bitstring(SIMD.Intrinsics.bitreverse(UInt(_overflowed_odd))),
     #     "\n[Q] 0b", bitstring((in_string >> 63) * typemax(UInt)),
@@ -289,8 +364,9 @@ end
     return newlines
 end
 
+# Generic fallback for when open and close quote differs and when buffer, or its last trailing bytes are too small for SIMD, i.e. < 64 bytes).
 function _find_newlines_generic!(l::Lexer{E,OQ,CQ}, buf, out, curr_pos::Int=firstindex(buf), end_pos::Int=lastindex(buf)) where {E,OQ,CQ}
-    @assert 1 <= curr_pos <= end_pos <= length(buf) <= typemax(Int32)
+    @assert (1 <= curr_pos <= end_pos <= length(buf) && end_pos <= typemax(Int32))
     structural_characters = _scanbyte_bytes(l)
 
     ptr = pointer(buf)
@@ -388,8 +464,9 @@ function _find_newlines_generic!(l::Lexer{E,OQ,CQ}, buf, out, curr_pos::Int=firs
     return nothing
 end
 
+# Quote-unaware lexer we use for trailing bytes of inputs with length that is not a multiple of 64.
 function _find_newlines_quote_unaware_scanbyte!(l::Lexer{E,OQ,CQ,NL}, buf::Vector{UInt8}, out::AbstractVector{Int32}, curr_pos::Int=firstindex(buf), end_pos::Int=lastindex(buf)) where {E,OQ,CQ,NL}
-    @assert 1 <= curr_pos <= end_pos <= length(buf) <= typemax(Int32)
+    @assert (1 <= curr_pos <= end_pos <= length(buf) && end_pos <= typemax(Int32))
     ptr = pointer(buf, curr_pos)
     bytes_to_search = end_pos - curr_pos + 1
     base = Int32(curr_pos - 1)
@@ -409,8 +486,9 @@ function _find_newlines_quote_unaware_scanbyte!(l::Lexer{E,OQ,CQ,NL}, buf::Vecto
     end
 end
 
+# Quote-unaware lexer which handles 64-byte aligned buffers and leaves the rest to `_find_newlines_quote_unaware_scanbyte!`.
 function _find_newlines_quote_unaware_simd!(l::Lexer, buf::Vector{UInt8}, out::AbstractVector{Int32}, curr_pos::Int=firstindex(buf), end_pos::Int=lastindex(buf))
-    @assert 1 <= curr_pos <= end_pos <= length(buf) <= typemax(Int32)
+    @assert (1 <= curr_pos <= end_pos <= length(buf) && end_pos <= typemax(Int32))
     base = unsafe_trunc(Int32, curr_pos)
     @inbounds while curr_pos <= (end_pos - 63)
         input = vload(Vec{64, UInt8}, buf, curr_pos)
@@ -429,22 +507,32 @@ function _find_newlines_quote_unaware_simd!(l::Lexer, buf::Vector{UInt8}, out::A
     end
 end
 
+"""
+    find_newlines!(l::Lexer, buf::Vector{UInt8}, out::AbstractVector{Int32}, curr_pos::Int=firstindex(buf), end_pos::Int=lastindex(buf))
+
+Find newlines in `buf[curr_pos:end_pos]` and push their positions to `out`. The newline positions are relative to the beginning of `buf`.
+The type of the `Lexer` determines the rules for handling quotes and escapes. See `Lexer` for details.
+
+`end_pos` must be less than `typemax(Int32)` and `1 <= curr_pos <= end_pos`.
+"""
+function find_newlines! end
+
 # Generic fallback for when open and close quote differs (should be also used in case the buffer is too small for SIMD).
 function find_newlines!(l::Lexer{E,OQ,CQ}, buf::Vector{UInt8}, out::AbstractVector{Int32}, curr_pos::Int=firstindex(buf), end_pos::Int=lastindex(buf)) where {E,OQ,CQ}
-    1 <= curr_pos <= end_pos <= length(buf) <= typemax(Int32) || throw(ArgumentError("Invalid range: $curr_pos:$end_pos, must be 1 <= curr_pos <= end_pos <= $(length(buf)) <= $(typemax(Int32))"))
+    (1 <= curr_pos <= end_pos <= length(buf) && end_pos <= typemax(Int32)) || throw(ArgumentError("Invalid range: $curr_pos:$end_pos, must be 1 <= curr_pos <= end_pos <= $(length(buf)) <= $(typemax(Int32))"))
     _find_newlines_generic!(l, buf, out, curr_pos, end_pos)
     return nothing
 end
 # Fast path for when no newlines may appear inside quotes.
 function find_newlines!(l::Lexer{Nothing,Nothing,Nothing}, buf::Vector{UInt8}, out::AbstractVector{Int32}, curr_pos::Int=firstindex(buf), end_pos::Int=lastindex(buf))
-    1 <= curr_pos <= end_pos <= length(buf) <= typemax(Int32) || throw(ArgumentError("Invalid range: $curr_pos:$end_pos, must be 1 <= curr_pos <= end_pos <= $(length(buf)) <= $(typemax(Int32))"))
+    (1 <= curr_pos <= end_pos <= length(buf) && end_pos <= typemax(Int32)) || throw(ArgumentError("Invalid range: $curr_pos:$end_pos, must be 1 <= curr_pos <= end_pos <= $(length(buf)) <= $(typemax(Int32))"))
     _find_newlines_quote_unaware_simd!(l, buf, out, curr_pos, end_pos)
     return nothing
 end
 
 # Path for when open and close quote are the same (escape might be different or the same as the quote)
 function find_newlines!(l::Lexer{E,Q,Q}, buf::Vector{UInt8}, out::AbstractVector{Int32}, curr_pos::Int=firstindex(buf), end_pos::Int=lastindex(buf)) where {E,Q}
-    1 <= curr_pos <= end_pos <= length(buf) <= typemax(Int32) || throw(ArgumentError("Invalid range: $curr_pos:$end_pos, must be 1 <= curr_pos <= end_pos <= $(length(buf)) <= $(typemax(Int32))"))
+    (1 <= curr_pos <= end_pos <= length(buf) && end_pos <= typemax(Int32)) || throw(ArgumentError("Invalid range: $curr_pos:$end_pos, must be 1 <= curr_pos <= end_pos <= $(length(buf)) <= $(typemax(Int32))"))
     base = unsafe_trunc(Int32, curr_pos)
     @inbounds while curr_pos <= (end_pos - 63)
         input = vload(Vec{64, UInt8}, buf, curr_pos)

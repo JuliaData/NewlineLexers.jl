@@ -1,6 +1,6 @@
 # NewlineLexers.jl
 
-Quote-aware newline finder.
+Quote-aware newline finder. By default it uses a branchless algorithm to find newlines, and is able to skip those which appear inside string fields. This is useful for parsing CSV files, for example, where we want to quickly find all newlines that separate individual records.
 
 ```julia
 julia> data = collect(codeunits(""" abc\n "efg\n" \n """));
