@@ -18,7 +18,7 @@ end
 # happens with PackageCompiler and only when targetting multiple cpu targets.
 # TODO: use Preferences.jl and more granular feature settings
 # const _AVOID_PLATFORM_SPECIFIC_LLVM_CODE = get(ENV, "JULIA_CPU_TARGET", "-Cnative" in Base.julia_cmd().exec ? "native" : "") != "native"
-const _AVOID_PLATFORM_SPECIFIC_LLVM_CODE = get(ENV, "NEWLINELEXERS_NATIVE", "false") == "false"
+const _AVOID_PLATFORM_SPECIFIC_LLVM_CODE = false # get(ENV, "NEWLINELEXERS_NATIVE", "false") == "false"
 
 # Compare two vectors of 64 bytes and produce an UInt64 where the set bits
 # indicate the positions where the two vectors match.
