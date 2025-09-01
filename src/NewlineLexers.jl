@@ -1,6 +1,6 @@
 module NewlineLexers
 
-using SIMD, ScanByte, Libdl
+using SIMD, Libdl
 
 export Lexer, find_newlines!, possibly_not_in_string
 # const compat
@@ -77,17 +77,9 @@ let # Feature detection -- copied from ScanByte.jl
     end
 end
 
-@static if _AVOID_PLATFORM_SPECIFIC_LLVM_CODE
-    # The first argument is used to dispatch on a detected CPU feature set,
-    # in this case we want to use the generic fallback, so we provide "nothing".
-    @inline _internal_memchr(ptr::Ptr{UInt8}, len::UInt, valbs::Val) = ScanByte._memchr(nothing, ScanByte.SizedMemory(Ptr{UInt8}(ptr), len), valbs)
-end
-@static if !_AVOID_PLATFORM_SPECIFIC_LLVM_CODE
-    @inline function _internal_memchr(ptr::Ptr{UInt8}, len::UInt, valbs::Val)
-        ScanByte.memchr(ScanByte.SizedMemory(Ptr{UInt8}(ptr), len), valbs)
-    end
-end
-@inline _internal_memchr(ptr::Ptr{UInt8}, len::UInt, byte::UInt8) = ScanByte.memchr(ScanByte.SizedMemory(Ptr{UInt8}(ptr), len), byte)
+
+@inline _internal_memchr(ptr::Ptr{UInt8}, len::UInt, byte::UInt8) = @inbounds findfirst(==(byte), unsafe_wrap(Vector{UInt8}, ptr, len))
+@inline _internal_memchr(ptr::Ptr{UInt8}, len::UInt, byte::Val{B}) where B = @inbounds findfirst(in(B), unsafe_wrap(Vector{UInt8}, ptr, len))
 
 const _DOUBLEQUOTE64 = Vec(ntuple(_->VecElement(UInt8('"')), 64))
 const _SINGLEQUOTE64 = Vec(ntuple(_->VecElement(UInt8('\'')), 64))
@@ -210,7 +202,7 @@ function Base.show(io::IO, l::Lexer{E,OQ,CQ,NL}) where {E,OQ,CQ,NL}
 end
 
 # Returns a valid `bytes` for `ScanByte.memchr(..., bytes)`
-@generated _scanbyte_bytes(::Lexer{E,OQ,CQ,NL}) where {E,OQ,CQ,NL} = Val(ScanByte.ByteSet((E,OQ,CQ,NL)))
+@generated _scanbyte_bytes(::Lexer{E,OQ,CQ,NL}) where {E,OQ,CQ,NL} = OQ == CQ ? E == CQ ? Val((E,NL)) : Val((E,CQ,NL)) : Val((E,OQ,CQ,NL))
 @generated _scanbyte_bytes(::Lexer{Nothing,Nothing,Nothing,NL}) where {NL} = NL
 
 # Take a 64-byte input and produce a 64-bit integer where the bits are set

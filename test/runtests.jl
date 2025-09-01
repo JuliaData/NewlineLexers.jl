@@ -1,7 +1,6 @@
 using Test
 using NewlineLexers
 using SIMD: Vec, vload
-import ScanByte
 
 @info "_AVOID_PLATFORM_SPECIFIC_LLVM_CODE=$(NewlineLexers._AVOID_PLATFORM_SPECIFIC_LLVM_CODE)"
 
@@ -103,13 +102,13 @@ end
     l = NewlineLexers.Lexer(IOBuffer(), nothing)
     @test NewlineLexers._scanbyte_bytes(l) == UInt8('\n')
     l = NewlineLexers.Lexer(IOBuffer(), UInt8('"'), UInt8('"'), UInt8('"'))
-    @test NewlineLexers._scanbyte_bytes(l) == Val(ScanByte.ByteSet((UInt8('"'), UInt8('\n'))))
+    @test NewlineLexers._scanbyte_bytes(l) == Val((UInt8('"'), UInt8('\n')))
     l = NewlineLexers.Lexer(IOBuffer(), UInt8('\\'), UInt8('"'), UInt8('"'))
-    @test NewlineLexers._scanbyte_bytes(l) == Val(ScanByte.ByteSet((UInt8('\\'), UInt8('"'), UInt8('\n'))))
+    @test NewlineLexers._scanbyte_bytes(l) == Val((UInt8('\\'), UInt8('"'), UInt8('\n')))
     l = NewlineLexers.Lexer(IOBuffer(), UInt8('\\'), UInt8('['), UInt8(']'))
-    @test NewlineLexers._scanbyte_bytes(l) == Val(ScanByte.ByteSet((UInt8('\\'), UInt8('['), UInt8(']'), UInt8('\n'))))
+    @test NewlineLexers._scanbyte_bytes(l) == Val((UInt8('\\'), UInt8('['), UInt8(']'), UInt8('\n')))
     l = NewlineLexers.Lexer(IOBuffer(), UInt8('\\'), UInt8('['), UInt8(']'), UInt8('\r'))
-    @test NewlineLexers._scanbyte_bytes(l) == Val(ScanByte.ByteSet((UInt8('\\'), UInt8('['), UInt8(']'), UInt8('\r'))))
+    @test NewlineLexers._scanbyte_bytes(l) == Val((UInt8('\\'), UInt8('['), UInt8(']'), UInt8('\r')))
 end
 
 @testset "_find_newlines_kernel!(l::Lexer{E,Q,Q}, ...)" begin
